@@ -1,0 +1,53 @@
+# Base44 development environment for God's Eye View.
+# Single Vite dev server (frontend + local API provider middleware on one origin)
+# fronted by an nginx reverse proxy on host port 3000 that strips the dev
+# server's X-Frame-Options / frame-ancestors headers so the preview iframe can
+# embed the page, and proxies websocket upgrades for HMR.
+#
+# Bring up:  docker compose -f docker-compose.base44.yml up -d --build
+services:
+  web:
+    image: node:24-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      # Bind all interfaces and let Vite allow any host (the sandbox proxy
+      # presents a rotating external hostname).
+      - HOST=0.0.0.0
+      - PORT=4173
+      - PUPPETEER_SKIP_DOWNLOAD=true
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      # Safety net for Vite >= 6.1 host allowlisting (allowedHosts is already
+      # `true` because HOST=0.0.0.0, but this is harmless).
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+    command: sh -c "npm install --no-audit --no-fund && npm run dev"
+    expose:
+      - "4173"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://localhost:4173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./nginx.base44.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -q --spider http://localhost:3000/ || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
